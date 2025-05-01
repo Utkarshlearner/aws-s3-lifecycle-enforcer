@@ -1,0 +1,18 @@
+🚀 Deployment Steps
+Make sure the AWS CLI is configured (aws configure) before running these commands.
+
+1) Create IAM Role
+aws cloudformation create-stack --stack-name S3-LifeCycle-IAM-Stack --template-body file://iam.yaml --capabilities CAPABILITY_NAMED_IAM
+
+
+2) Create Lambda
+aws cloudformation create-stack --stack-name S3-LifeCycle-Lambda-Stack --template-body file://lambda.yaml --capabilities CAPABILITY_NAMED_IAM
+
+
+
+3)  Create Config Rules
+aws cloudformation create-stack --stack-name S3-LifeCycle-ConfigRules-Stack --template-body file://configrules.yaml --capabilities CAPABILITY_NAMED_IAM
+
+
+
+
