@@ -32,9 +32,6 @@ dist/
 # Jupyter Notebook files
 .ipynb_checkpoints/
 
-# YAML related
-*.yaml
-*.yml
 
 # Logs
 *.log

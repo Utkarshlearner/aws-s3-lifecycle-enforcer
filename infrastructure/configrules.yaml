@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Creating Config Rule for aws-s3-lifecycle-enforcer"
+
+Parameters:
+  RuleName:
+    Type: String
+    Description: Name of Rule
+    Default: "S3-Lifecycle-Rule"
+
+
+Resources:
+  S3LifecycleConfigRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Ref RuleName
+      Description: Ensures S3 buckets have lifecycle configuration
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::S3::Bucket
+      Source:
+        Owner: CUSTOM_LAMBDA
+        SourceIdentifier: !ImportValue LambdaFunctionArn
+        SourceDetails:
+          - EventSource: aws.config
+            MessageType: ConfigurationItemChangeNotification
+
+Outputs:
+  ConfigRuleName:
+    Value: !Ref S3LifecycleConfigRule
+    Export:
+      Name: ConfigRuleName

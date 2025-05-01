@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Creating IAM Role for aws-s3-lifecycle-enforcer"
+
+Parameters:
+  LambdaRoleName:
+    Type: String
+    Description: Name of IAM Role
+    Default: "S3-Lifecycle-LambdaRole"
+
+
+
+Resources:
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref LambdaRoleName
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: S3LifecyclePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetLifecycleConfiguration
+                  - s3:PutLifecycleConfiguration
+                  - s3:ListBucket
+                Resource: arn:aws:s3:::*
+              - Effect: Allow
+                Action:
+                  - config:PutEvaluations
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: aws-s3-lifecycle-enforcer
+        - Key: Environment
+          Value: Dev
+

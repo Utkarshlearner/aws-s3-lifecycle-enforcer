@@ -1,0 +1,156 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Creating Lambda for aws-s3-lifecycle-enforcer"
+
+Parameters:
+  LambdaRoleName:
+    Type: String
+    Description: RoleName
+    Default: "S3-Lifecycle-LambdaRole"
+
+Resources:
+  S3LifecycleLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: S3LifecycleEnforcer
+      Handler: index.lambda_handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${LambdaRoleName}
+      Runtime: python3.9
+      Timeout: 300
+      Tags:
+        - Key: Project
+          Value: aws-s3-lifecycle-enforcer
+        - Key: Environment
+          Value: Dev
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          from botocore.exceptions import ClientError
+
+          s3 = boto3.client('s3')
+          config = boto3.client('config')
+
+          def lambda_handler(event, context):
+              print(f"Lambda triggered...")
+
+              invoking_event = json.loads(event['invokingEvent'])
+              bucket_name = invoking_event['configurationItem']['resourceName']
+              print(f"Bucket being evaluated: {bucket_name}")
+              
+              compliance_type = "COMPLIANT"
+              annotation = f"Bucket {bucket_name} already has required lifecycle configuration."
+
+              existing_rules = []
+
+              try:
+                  print("Checking if lifecycle configuration exists...")
+                  response = s3.get_bucket_lifecycle_configuration(Bucket=bucket_name)
+                  existing_rules = response['Rules']
+                  print(f"Found {len(existing_rules)} existing lifecycle rule(s).")
+              except ClientError as e:
+                  if e.response['Error']['Code'] == 'NoSuchLifecycleConfiguration':
+                    print(f"No lifecycle configuration found for {bucket_name}.")
+                  else:
+                    print(f"Unexpected error occurred: {e}")
+                    raise e
+
+              # Check if a transition rule already exists
+              has_transition = any('Transitions' in rule or 'NoncurrentVersionTransitions' in rule for rule in existing_rules)
+
+              if not has_transition:
+                  print(f"No transition rule found. Appending standard transition rule...")
+                  transition_rule = {
+                      'ID': 'TransitionOnly',
+                      'Filter': {'Prefix': ''},
+                      'Status': 'Enabled',
+                      'Transitions': [
+                          {'Days': 90, 'StorageClass': 'STANDARD_IA'}
+                      ],
+                      'NoncurrentVersionTransitions': [
+                          {'NoncurrentDays': 90, 'StorageClass': 'STANDARD_IA'}
+                      ]
+                  }
+                  existing_rules.append(transition_rule)
+                  compliance_type = "NON_COMPLIANT"
+                  annotation = f"Transition rule was missing. Appended standard transition rule to {bucket_name}."
+              else:
+                  print(f"Transition rule already exists. No changes required.")
+
+              # Always make sure cleanup rule is present too
+              has_cleanup = any(
+                  'AbortIncompleteMultipartUpload' in rule or
+                  ('Expiration' in rule and 'ExpiredObjectDeleteMarker' in rule['Expiration'])
+                  for rule in existing_rules
+              )
+
+              if not has_cleanup:
+                  print(f"Cleanup rules missing. Appending cleanup rule...")
+                  cleanup_rule = {
+                      'ID': 'CleanupExpiredAndMultipart',
+                      'Filter': {'Prefix': ''},
+                      'Status': 'Enabled',
+                      'AbortIncompleteMultipartUpload': {
+                          'DaysAfterInitiation': 1
+                      },
+                      'Expiration': {
+                          'ExpiredObjectDeleteMarker': True
+                      }
+                  }
+                  existing_rules.append(cleanup_rule)
+                  compliance_type = "NON_COMPLIANT"
+                  annotation += " Cleanup rules were also added."
+              else:
+                  print(f"Cleanup rules already exist.")
+
+              # If any rules were added, put updated config
+              if compliance_type == "NON_COMPLIANT":
+                  print("Updating bucket lifecycle configuration...")
+                  s3.put_bucket_lifecycle_configuration(
+                      Bucket=bucket_name,
+                      LifecycleConfiguration={'Rules': existing_rules}
+                  )
+
+              # Report to AWS Config
+              print(f"Reporting to AWS Config...")
+              config.put_evaluations(
+                  Evaluations=[
+                      {
+                          'ComplianceResourceType': 'AWS::S3::Bucket',
+                          'ComplianceResourceId': bucket_name,
+                          'ComplianceType': compliance_type,
+                          'Annotation': annotation,
+                          'OrderingTimestamp': invoking_event['configurationItem']['configurationItemCaptureTime']
+                      }
+                  ],
+                  ResultToken=event['resultToken']
+              )
+
+              print(f"Lambda execution completed.")
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps(annotation)
+              }
+
+  S3LifecycleLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/S3LifecycleEnforcer
+      RetentionInDays: 3
+      Tags:
+        - Key: Project
+          Value: aws-s3-lifecycle-enforcer
+        - Key: Environment
+          Value: Dev
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt S3LifecycleLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: config.amazonaws.com
+
+Outputs:
+  LambdaFunctionArn:
+    Value: !GetAtt S3LifecycleLambda.Arn
+    Export:
+      Name: LambdaFunctionArn
